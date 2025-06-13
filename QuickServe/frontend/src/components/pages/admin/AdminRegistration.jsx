@@ -11,42 +11,9 @@ import {
   ChevronRight,
   ChevronLeft,
   Trash2,
-  Upload
+  Upload,
+  Loader2
 } from 'lucide-react';
-
-const saveAdminCredentials = (username, email, password, restaurantId, profileData) => {
-  const admins = JSON.parse(localStorage.getItem('adminCredentials') || '[]');
-  if (admins.some(admin => admin.username === username)) {
-    return { success: false, error: 'Username already exists' };
-  }
-  if (admins.some(admin => admin.email === email)) {
-    return { success: false, error: 'Email already exists' };
-  }
-  
-  const adminProfile = {
-    username,
-    email,
-    password,
-    restaurantId,
-    profileData: {
-      ...profileData
-    }
-  };
-  
-  admins.push(adminProfile);
-  localStorage.setItem('adminCredentials', JSON.stringify(admins));
-  return { success: true };
-};
-
-const saveRestaurant = (restaurantData) => {
-  const restaurants = JSON.parse(localStorage.getItem('restaurants') || '[]');
-  restaurantData.id = Date.now().toString();
-  restaurantData.categories = [];
-  restaurantData.menuItems = [];
-  restaurants.push(restaurantData);
-  localStorage.setItem('restaurants', JSON.stringify(restaurants));
-  return restaurantData.id;
-};
 
 const AdminRegistration = () => {
   const [step, setStep] = useState(1);
@@ -63,6 +30,7 @@ const AdminRegistration = () => {
     imagePreview: ''
   });
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleChange = (e) => {
@@ -100,77 +68,86 @@ const AdminRegistration = () => {
     }));
   };
 
-  const handleSubmit = (e) => {
-  e.preventDefault();
-  setError('');
-  
-  if (step === 1) {
-    if (formData.password !== formData.confirmPassword) {
-      setError("Passwords don't match!");
-      return;
-    }
-    if (formData.password.length < 6) {
-      setError("Password must be at least 6 characters long");
-      return;
-    }
-    setStep(2);
-  } else {
-    if (!formData.coverImage) {
-      setError('Restaurant image is required');
-      return;
-    }
-
-    // Convert image to base64 before saving
-    const reader = new FileReader();
-    reader.readAsDataURL(formData.coverImage);
-    reader.onload = () => {
-      const base64Image = reader.result;
-
-      const restaurantId = saveRestaurant({
-        name: formData.restaurantName,
-        cuisine: formData.cuisineType,
-        rating: 0,
-        deliveryTime: '30-45 min',
-        minOrder: 200,
-        address: formData.address,
-        phoneNumber: formData.phoneNumber,
-        image: base64Image,  // Store as base64 string
-        menuItems: []
-      });
-      
-      const { success, error } = saveAdminCredentials(
-        formData.username, 
-        formData.email,
-        formData.password, 
-        restaurantId,
-        {
-          restaurantName: formData.restaurantName,
-          address: formData.address,
-          cuisineType: formData.cuisineType,
-          phoneNumber: formData.phoneNumber,
-          coverImage: base64Image  // Store as base64 string
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setIsLoading(true);
+    
+    try {
+      if (step === 1) {
+        // Validate step 1 data
+        if (formData.password !== formData.confirmPassword) {
+          throw new Error("Passwords don't match!");
         }
-      );
-      
-      if (!success) {
-        setError(error || 'Registration failed');
-        return;
+        if (formData.password.length < 6) {
+          throw new Error("Password must be at least 6 characters long");
+        }
+        
+        // Check with backend if username/email exists
+        const response = await fetch('http://localhost:5000/api/admin/register', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            username: formData.username,
+            email: formData.email,
+            password: formData.password,
+            confirmPassword: formData.confirmPassword,
+            step: '1'
+          })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Validation failed');
+        }
+        
+        setStep(2);
+      } else {
+        // Step 2 submission
+        if (!formData.coverImage) {
+          throw new Error('Restaurant image is required');
+        }
+        
+        const formDataToSend = new FormData();
+        formDataToSend.append('username', formData.username);
+        formDataToSend.append('email', formData.email);
+        formDataToSend.append('password', formData.password);
+        formDataToSend.append('restaurantName', formData.restaurantName);
+        formDataToSend.append('address', formData.address);
+        formDataToSend.append('cuisineType', formData.cuisineType);
+        formDataToSend.append('phoneNumber', formData.phoneNumber);
+        formDataToSend.append('coverImage', formData.coverImage);
+        formDataToSend.append('step', '2');
+        
+        const response = await fetch('http://localhost:5000/api/admin/register', {
+          method: 'POST',
+          body: formDataToSend
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Registration failed');
+        }
+        
+        // Save admin data to localStorage and redirect
+        localStorage.setItem('currentAdmin', JSON.stringify({
+          username: data.admin.username,
+          email: data.admin.email,
+          restaurantId: data.admin.restaurantId
+        }));
+        
+        navigate('/dashboard');
       }
-      
-      localStorage.setItem('currentAdmin', JSON.stringify({
-        username: formData.username,
-        email: formData.email,
-        restaurantId: restaurantId
-      }));
-      
-      navigate('/dashboard');
-    };
-
-    reader.onerror = () => {
-      setError('Error processing image. Please try again.');
-    };
-  }
-};
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -245,6 +222,7 @@ const AdminRegistration = () => {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Enter username"
                       required
+                      disabled={isLoading}
                     />
                   </div>
 
@@ -261,6 +239,7 @@ const AdminRegistration = () => {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Enter email"
                       required
+                      disabled={isLoading}
                     />
                   </div>
 
@@ -277,6 +256,7 @@ const AdminRegistration = () => {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="••••••••"
                       required
+                      disabled={isLoading}
                     />
                   </div>
 
@@ -293,15 +273,26 @@ const AdminRegistration = () => {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Confirm password"
                       required
+                      disabled={isLoading}
                     />
                   </div>
 
                   <div>
                     <button
                       type="submit"
-                      className="w-full flex justify-center items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-4 rounded-lg transition-colors"
+                      className="w-full flex justify-center items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-4 rounded-lg transition-colors disabled:opacity-70"
+                      disabled={isLoading}
                     >
-                      Continue <ChevronRight className="h-4 w-4" />
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        <>
+                          Continue <ChevronRight className="h-4 w-4" />
+                        </>
+                      )}
                     </button>
                   </div>
 
@@ -327,6 +318,7 @@ const AdminRegistration = () => {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Enter restaurant name"
                       required
+                      disabled={isLoading}
                     />
                   </div>
 
@@ -345,6 +337,7 @@ const AdminRegistration = () => {
                         className="w-full pl-10 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="Enter full address"
                         required
+                        disabled={isLoading}
                       />
                     </div>
                   </div>
@@ -362,6 +355,7 @@ const AdminRegistration = () => {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="e.g., Italian, Indian, Chinese"
                       required
+                      disabled={isLoading}
                     />
                   </div>
 
@@ -380,6 +374,7 @@ const AdminRegistration = () => {
                         className="w-full pl-10 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="Enter phone number"
                         required
+                        disabled={isLoading}
                       />
                     </div>
                   </div>
@@ -400,12 +395,13 @@ const AdminRegistration = () => {
                             type="button"
                             onClick={removeImage}
                             className="absolute top-2 right-2 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-colors"
+                            disabled={isLoading}
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
                       ) : (
-                        <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
+                        <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer ${isLoading ? 'bg-gray-100' : 'bg-gray-50 hover:bg-gray-100'}`}>
                           <div className="flex flex-col items-center justify-center pt-5 pb-6">
                             <Upload className="h-8 w-8 text-gray-400 mb-2" />
                             <p className="text-sm text-gray-500">Click to upload image</p>
@@ -418,6 +414,7 @@ const AdminRegistration = () => {
                             onChange={handleChange}
                             accept="image/*"
                             required
+                            disabled={isLoading}
                           />
                         </label>
                       )}
@@ -428,15 +425,24 @@ const AdminRegistration = () => {
                     <button
                       type="button"
                       onClick={() => setStep(1)}
-                      className="flex-1 flex justify-center items-center gap-2 bg-gray-200 hover:bg-gray-300 text-gray-800 py-2.5 px-4 rounded-lg transition-colors"
+                      className="flex-1 flex justify-center items-center gap-2 bg-gray-200 hover:bg-gray-300 text-gray-800 py-2.5 px-4 rounded-lg transition-colors disabled:opacity-70"
+                      disabled={isLoading}
                     >
                       <ChevronLeft className="h-4 w-4" /> Back
                     </button>
                     <button
                       type="submit"
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 px-4 rounded-lg transition-colors"
+                      className="flex-1 flex justify-center items-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2.5 px-4 rounded-lg transition-colors disabled:opacity-70"
+                      disabled={isLoading}
                     >
-                      Complete Registration
+                      {isLoading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Registering...
+                        </>
+                      ) : (
+                        'Complete Registration'
+                      )}
                     </button>
                   </div>
                 </div>
